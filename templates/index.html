@@ -1,0 +1,83 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Contest Audio Browser</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 1rem; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 0.9rem; }
+      th { background: #f3f3f3; }
+      tr:hover { background: #eef; cursor: pointer; }
+      .small { font-size: 0.8rem; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>Contest Audio Browser</h1>
+
+    <p class="small">
+      Click a QSO row to jump the audio player to that QSO (starting {{ qsos[0].file_offset if qsos else 0 }} s before).
+    </p>
+
+    <audio id="player" controls style="width: 100%; margin-bottom: 1rem;"></audio>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Date/Time (UTC)</th>
+          <th>Freq</th>
+          <th>Mode</th>
+          <th>My Call</th>
+          <th>DX Call</th>
+          <th>Sent</th>
+          <th>Rcvd</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q in qsos %}
+        <tr onclick="playQSO('{{ q.file }}', {{ q.file_offset }})">
+          <td>{{ q.index }}</td>
+          <td>{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ q.freq }}</td>
+          <td>{{ q.mode }}</td>
+          <td>{{ q.mycall }}</td>
+          <td>{{ q.hiscall }}</td>
+          <td>{{ q.rst_s }} {{ q.exch_s }}</td>
+          <td>{{ q.rst_r }} {{ q.exch_r }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <script>
+      function playQSO(file, offset) {
+        if (!file) {
+          alert("No audio file mapped for this QSO.");
+          return;
+        }
+
+        const audio = document.getElementById("player");
+        const wantedSrc = "/audio/" + file;
+
+        if (audio.getAttribute("data-src") !== wantedSrc) {
+          audio.src = wantedSrc;
+          audio.setAttribute("data-src", wantedSrc);
+
+          // Wait until metadata (duration, etc.) is loaded
+          const handler = function () {
+            audio.currentTime = offset;
+            audio.play();
+            audio.removeEventListener("loadedmetadata", handler);
+          };
+          audio.addEventListener("loadedmetadata", handler);
+        } else {
+          audio.currentTime = offset;
+          audio.play();
+        }
+      }
+    </script>
+  </body>
+</html>
+

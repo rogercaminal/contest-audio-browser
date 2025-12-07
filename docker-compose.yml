@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      AUDIO_DIR: /data/audio
+      CABRILLO_FILE: /data/logs/contest.log
+    volumes:
+      - ./data/audio:/data/audio
+      - ./data/logs:/data/logs
+
