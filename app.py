@@ -2,7 +2,7 @@
 import os
 from datetime import datetime
 
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, render_template, send_from_directory, request  # <-- add request
 from mutagen.mp3 import MP3  # for MP3 duration
 
 AUDIO_DIR = os.environ.get("AUDIO_DIR", "/data/audio")
@@ -56,7 +56,6 @@ def parse_cabrillo(path):
                 continue
             parts = line.split()
             # QSO: freq mode date time mycall rst_s exch_s hiscall rst_r exch_r ...
-            # We expect at least 11 tokens
             if len(parts) < 11:
                 continue
 
@@ -102,9 +101,7 @@ def attach_audio_positions(qsos, audio_index):
         delta_qso_vs_contest = (q["datetime"] - contest_start).total_seconds()
         absolute_rec_second = offset_rec_vs_contest + delta_qso_vs_contest
 
-        # center of the QSO in the recording
         center = absolute_rec_second
-        # where we actually start playback (a bit earlier)
         start_play = max(0.0, center - PRE_SECONDS)
 
         file_name = None
@@ -126,7 +123,33 @@ def attach_audio_positions(qsos, audio_index):
 
 @app.route("/")
 def index():
-    return render_template("index.html", qsos=qsos)
+    # --- read search parameters from URL ---
+    call_query = (request.args.get("call") or "").strip().upper()
+    time_query = (request.args.get("time") or "").strip()
+
+    # --- filter QSOs in Python ---
+    filtered = []
+    for q in qsos:
+        # filter by call (matches MY call or DX call, contains)
+        if call_query:
+            if call_query not in q["hiscall"].upper() and call_query not in q["mycall"].upper():
+                continue
+
+        # filter by time substring
+        # we format the datetime as "YYYY-MM-DD HH:MM"
+        if time_query:
+            dt_str = q["datetime"].strftime("%Y-%m-%d %H:%M")
+            if time_query not in dt_str:
+                continue
+
+        filtered.append(q)
+
+    return render_template(
+        "index.html",
+        qsos=filtered,
+        call_query=call_query,
+        time_query=time_query,
+    )
 
 
 @app.route("/audio/<path:filename>")
