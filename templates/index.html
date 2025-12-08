@@ -18,17 +18,33 @@
       }
 
       table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #ccc; padding: 4px 6px; }
+      th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 0.9rem; }
+      th { background: #f3f3f3; }
       tr:hover { background: #eef; cursor: pointer; }
 
       .selected-range { background: #cde !important; }
 
       .search-bar {
-        margin-bottom: 1rem; padding: 0.5rem; background: #f5f5f5; border: 1px solid #ddd;
+        margin-bottom: 1rem;
+        padding: 0.5rem;
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        font-size: 0.9rem;
       }
 
-      .controls-bar { margin-bottom: 1rem; }
+      .search-bar input[type="text"] {
+        margin-right: 0.5rem;
+        padding: 2px 4px;
+      }
 
+      .controls-bar {
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+      }
+
+      .controls-bar button {
+        padding: 3px 8px;
+      }
     </style>
   </head>
 
@@ -41,34 +57,59 @@
 
     <div class="page">
 
-      <form method="get" class="search-bar" action="/contest/{{ contest_id }}">
-        <label>Callsign:</label>
-        <input type="text" name="call" value="{{ call_query or '' }}" placeholder="DL1ABC" />
+      <!-- Search form -->
+      <form method="get"
+            class="search-bar"
+            action="{{ url_for('contest_view', contest_id=contest_id) }}">
+        <label for="call">Callsign:</label>
+        <input
+          type="text"
+          id="call"
+          name="call"
+          value="{{ call_query or '' }}"
+          placeholder="DL1ABC"
+        />
 
-        <label>From:</label>
-        <input type="text" name="time_from" value="{{ time_from_query or '' }}"
-               placeholder="YYYY-MM-DD HH:MM" />
+        <label for="time_from">From (UTC):</label>
+        <input
+          type="text"
+          id="time_from"
+          name="time_from"
+          value="{{ time_from_query or '' }}"
+          placeholder="YYYY-MM-DD HH:MM"
+        />
 
-        <label>To:</label>
-        <input type="text" name="time_to" value="{{ time_to_query or '' }}"
-               placeholder="YYYY-MM-DD HH:MM" />
+        <label for="time_to">To (UTC):</label>
+        <input
+          type="text"
+          id="time_to"
+          name="time_to"
+          value="{{ time_to_query or '' }}"
+          placeholder="YYYY-MM-DD HH:MM"
+        />
 
         <button type="submit">Search</button>
-        <a href="/contest/{{ contest_id }}" style="margin-left: 1rem;">Clear</a>
+        <a href="{{ url_for('contest_view', contest_id=contest_id) }}"
+           style="margin-left: 1rem;">Clear</a>
       </form>
 
+      <!-- Selection + download controls -->
       <div class="controls-bar">
         <span id="selection-info">No selection</span>
 
-        <form id="download-form"
-              action="/contest/{{ contest_id }}/download_selection"
-              method="post" style="display:inline;">
+        <form
+          id="download-form"
+          action="{{ url_for('contest_download_selection', contest_id=contest_id) }}"
+          method="post"
+          style="display:inline;"
+        >
           <input type="hidden" id="start_index" name="start_index" />
           <input type="hidden" id="end_index" name="end_index" />
           <button type="submit">Download selection</button>
         </form>
       </div>
 
+      <!-- QSO table -->
       <table>
         <thead>
           <tr>
@@ -84,8 +125,14 @@
         </thead>
         <tbody>
           {% for q in qsos %}
-          <tr data-index="{{ q.index }}"
-              onclick="rowClicked('{{ q.file }}', {{ q.file_offset }}, {{ q.index }})">
+          <tr
+            data-index="{{ q.index }}"
+            onclick="rowClicked(
+              '{{ url_for('contest_audio', contest_id=contest_id, filename=q.file) if q.file else '' }}',
+              {{ q.file_offset }},
+              {{ q.index }}
+            )"
+          >
             <td>{{ q.index }}</td>
             <td>{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
             <td>{{ q.freq }}</td>
@@ -101,34 +148,46 @@
     </div>
 
     <script>
-      function playQSO(file, offset) {
+      function playQSO(url, offset) {
         const audio = document.getElementById("player");
-        if (!file) { alert("No audio file mapped for this QSO"); return; }
-        const src = "/contest/{{ contest_id }}/audio/" + file;
 
-        if (audio.getAttribute("data-src") !== src) {
-          audio.src = src;
-          audio.setAttribute("data-src", src);
-          audio.addEventListener("loadedmetadata", function handler() {
+        if (!url) {
+          alert("No audio file mapped for this QSO.");
+          return;
+        }
+
+        const wantedSrc = url;
+
+        if (audio.getAttribute("data-src") !== wantedSrc) {
+          audio.src = wantedSrc;
+          audio.setAttribute("data-src", wantedSrc);
+
+          const handler = function () {
             audio.currentTime = offset;
             audio.play();
             audio.removeEventListener("loadedmetadata", handler);
-          });
+          };
+          audio.addEventListener("loadedmetadata", handler);
         } else {
           audio.currentTime = offset;
           audio.play();
         }
       }
 
+      // Selection logic
       let selStart = null;
       let selEnd = null;
 
       function updateSelection() {
         const rows = document.querySelectorAll("tbody tr");
-        rows.forEach(r => {
+        rows.forEach((r) => {
           const idx = parseInt(r.dataset.index);
-          if (selStart !== null && selEnd !== null &&
-              idx >= selStart && idx <= selEnd) {
+          if (
+            selStart !== null &&
+            selEnd !== null &&
+            idx >= selStart &&
+            idx <= selEnd
+          ) {
             r.classList.add("selected-range");
           } else {
             r.classList.remove("selected-range");
@@ -154,20 +213,25 @@
         }
       }
 
-      function rowClicked(file, offset, index) {
+      function rowClicked(audioUrl, offset, index) {
+        // selection handling
         if (selStart === null) {
           selStart = index;
           selEnd = null;
         } else if (selEnd === null) {
-          if (index >= selStart) selEnd = index;
-          else { selEnd = selStart; selStart = index; }
+          if (index >= selStart) {
+            selEnd = index;
+          } else {
+            selEnd = selStart;
+            selStart = index;
+          }
         } else {
           selStart = index;
           selEnd = null;
         }
 
         updateSelection();
-        playQSO(file, offset);
+        playQSO(audioUrl, offset);
       }
 
       updateSelection();
