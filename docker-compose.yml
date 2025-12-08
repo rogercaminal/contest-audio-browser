@@ -1,12 +1,23 @@
+version: "3.9"
+
 services:
-  app:
+  contest-audio-browser:
     build: .
+    container_name: contest-audio-browser
     ports:
       - "8000:8000"
     environment:
-      AUDIO_DIR: /data/audio
-      CABRILLO_FILE: /data/logs/contest.log
+      # where the app expects things *inside* the container
+      AUDIO_DIR: /data/audio/cqww_2025_ef6t
+      CABRILLO_FILE: /data/logs/cqww_2025_ef6t/CQWWDXCW25.log
+      RECORDING_START_UTC: "2025-11-28 23:56:30"
+      CONTEST_START_UTC: "2025-11-29 00:00:00"
+      PRE_SECONDS: 0
+      # optional: server-side export folder
+      EXPORT_DIR: /data/exports
     volumes:
+      # host_path:container_path
       - ./data/audio:/data/audio
       - ./data/logs:/data/logs
+      - ./data/exports:/data/exports
 

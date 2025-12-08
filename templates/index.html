@@ -4,14 +4,35 @@
     <meta charset="utf-8">
     <title>Contest Audio Browser</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 1rem; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 0.9rem; }
-      th { background: #f3f3f3; }
-      tr:hover { background: #eef; cursor: pointer; }
-      .small { font-size: 0.8rem; color: #555; }
+      body { 
+        font-family: system-ui, sans-serif; 
+        margin: 0; 
+      }
+      .page {
+        margin: 1rem;
+      }
+      table { 
+        border-collapse: collapse; 
+        width: 100%; 
+      }
+      th, td { 
+        border: 1px solid #ccc; 
+        padding: 4px 6px; 
+        font-size: 0.9rem; 
+      }
+      th { 
+        background: #f3f3f3; 
+      }
+      tr:hover { 
+        background: #eef; 
+        cursor: pointer; 
+      }
+      .small { 
+        font-size: 0.8rem; 
+        color: #555; 
+      }
       .search-bar {
-        margin-bottom: 1rem;
+        margin-bottom: 0.5rem;
         padding: 0.5rem;
         background: #f5f5f5;
         border: 1px solid #ddd;
@@ -29,69 +50,88 @@
         padding: 3px 8px;
         font-size: 0.9rem;
       }
+
+      /* 🔹 Sticky audio bar */
+      .sticky-player {
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        background: #fff;
+        padding: 0.5rem 1rem 0.5rem 1rem;
+        border-bottom: 1px solid #ddd;
+      }
+      .sticky-player-inner {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
     </style>
   </head>
   <body>
-    <h1>Contest Audio Browser</h1>
+    <!-- Sticky bar with title + audio always visible -->
+    <div class="sticky-player">
+      <div class="sticky-player-inner">
+        <h1 style="margin: 0 0 0.3rem 0;">Contest Audio Browser</h1>
+        <p class="small" style="margin: 0 0 0.3rem 0;">
+          Click a QSO row to jump the audio player to that QSO (starting a few seconds before).
+        </p>
+        <audio id="player" controls style="width: 100%;"></audio>
+      </div>
+    </div>
 
-    <p class="small">
-      Click a QSO row to jump the audio player to that QSO (starting a few seconds before).
-    </p>
+    <div class="page">
+      <!-- Search form -->
+      <form method="get" class="search-bar">
+        <label for="call">Callsign:</label>
+        <input
+          type="text"
+          id="call"
+          name="call"
+          value="{{ call_query or '' }}"
+          placeholder="DL1ABC"
+        />
 
-    <!-- Search form -->
-    <form method="get" class="search-bar">
-      <label for="call">Callsign:</label>
-      <input
-        type="text"
-        id="call"
-        name="call"
-        value="{{ call_query or '' }}"
-        placeholder="DL1ABC"
-      />
+        <label for="time">Time (substring):</label>
+        <input
+          type="text"
+          id="time"
+          name="time"
+          value="{{ time_query or '' }}"
+          placeholder="2025-11-30 13:42"
+        />
 
-      <label for="time">Time (substring):</label>
-      <input
-        type="text"
-        id="time"
-        name="time"
-        value="{{ time_query or '' }}"
-        placeholder="2025-11-30 13:42"
-      />
+        <button type="submit">Search</button>
+        <a href="/" style="margin-left: 0.5rem;">Clear</a>
+      </form>
 
-      <button type="submit">Search</button>
-      <a href="/" style="margin-left: 0.5rem;">Clear</a>
-    </form>
-
-    <audio id="player" controls style="width: 100%; margin-bottom: 1rem;"></audio>
-
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Date/Time (UTC)</th>
-          <th>Freq</th>
-          <th>Mode</th>
-          <th>My Call</th>
-          <th>DX Call</th>
-          <th>Sent</th>
-          <th>Rcvd</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for q in qsos %}
-        <tr onclick="playQSO('{{ q.file }}', {{ q.file_offset }})">
-          <td>{{ q.index }}</td>
-          <td>{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td>{{ q.freq }}</td>
-          <td>{{ q.mode }}</td>
-          <td>{{ q.mycall }}</td>
-          <td>{{ q.hiscall }}</td>
-          <td>{{ q.rst_s }} {{ q.exch_s }}</td>
-          <td>{{ q.rst_r }} {{ q.exch_r }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Date/Time (UTC)</th>
+            <th>Freq</th>
+            <th>Mode</th>
+            <th>My Call</th>
+            <th>DX Call</th>
+            <th>Sent</th>
+            <th>Rcvd</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in qsos %}
+          <tr onclick="playQSO('{{ q.file }}', {{ q.file_offset }})">
+            <td>{{ q.index }}</td>
+            <td>{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>{{ q.freq }}</td>
+            <td>{{ q.mode }}</td>
+            <td>{{ q.mycall }}</td>
+            <td>{{ q.hiscall }}</td>
+            <td>{{ q.rst_s }} {{ q.exch_s }}</td>
+            <td>{{ q.rst_r }} {{ q.exch_r }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
 
     <script>
       function playQSO(file, offset) {
