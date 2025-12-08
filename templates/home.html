@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Select Contest</title>
+    <style>
+      body { font-family: sans-serif; padding: 20px; }
+      a {
+        display: block;
+        font-size: 1.2rem;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Select Contest</h1>
+
+    {% if contests %}
+      <ul>
+        {% for cid in contests %}
+        <li><a href="/contest/{{ cid }}">{{ cid }}</a></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No contests found under CONTESTS_ROOT.</p>
+    {% endif %}
+  </body>
+</html>
+

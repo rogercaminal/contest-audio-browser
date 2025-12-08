@@ -3,261 +3,251 @@ import io
 import zipfile
 from datetime import datetime
 
-from flask import (
-    Flask,
-    render_template,
-    send_from_directory,
-    request,
-    send_file,
-)
-from mutagen.mp3 import MP3  # for MP3 duration
+from flask import Flask, render_template, request, send_file, send_from_directory
+from mutagen.mp3 import MP3
 from pydub import AudioSegment
-
-AUDIO_DIR = os.environ.get("AUDIO_DIR", "/data/audio")
-CABRILLO_FILE = os.environ.get("CABRILLO_FILE", "/data/logs/contest.log")
-EXPORT_DIR = os.environ.get("EXPORT_DIR")
-RECORDING_START_UTC = os.environ.get("RECORDING_START_UTC")
-CONTEST_START_UTC = os.environ.get("CONTEST_START_UTC")
-PRE_SECONDS = float(os.environ.get("PRE_SECONDS", "10"))  # how many seconds before QSO to start
 
 app = Flask(__name__)
 
-audio_index = []  # list of {filename, start, end}
-qsos = []         # list of QSO dicts with file + offset
-header_lines = [] # Cabrillo header lines (everything before first QSO:)
+CONTESTS_ROOT = os.environ.get("CONTESTS_ROOT", "/data/contests")
+EXPORT_DIR = os.environ.get("EXPORT_DIR")
+PRE_SECONDS = float(os.environ.get("PRE_SECONDS", "10"))
+
+# Default timings (can later be per-contest)
+RECORDING_START_UTC = os.environ.get("RECORDING_START_UTC")
+CONTEST_START_UTC = os.environ.get("CONTEST_START_UTC")
 
 
-def parse_time_utc(s: str) -> datetime:
-    # format: "YYYY-MM-DD HH:MM:SS"
-    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+# -------------------------------------------------------------------
+# Contest session class ----------------------------------------------
+# -------------------------------------------------------------------
+
+class ContestSession:
+    def __init__(self, contest_id, base_dir):
+        self.id = contest_id
+        self.base_dir = base_dir
+        self.audio_dir = os.path.join(base_dir, "audio")
+        self.log_path = os.path.join(base_dir, "logs", "contest.log")
+
+        self.audio_index = []
+        self.header_lines = []
+        self.qsos = []
+
+        self._build()
+
+    @staticmethod
+    def _parse_time_utc(s):
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+
+    def _build_audio_index(self):
+        files = [f for f in os.listdir(self.audio_dir) if f.lower().endswith(".mp3")]
+        files.sort()
+        if not files:
+            raise RuntimeError(f"No MP3 files in {self.audio_dir}")
+
+        index = []
+        start = 0.0
+        for name in files:
+            path = os.path.join(self.audio_dir, name)
+            audio = MP3(path)
+            duration = float(audio.info.length)
+            index.append({"filename": name, "start": start, "end": start + duration})
+            start += duration
+
+        self.audio_index = index
+
+    def _parse_cabrillo(self):
+        headers = []
+        qsos = []
+        in_qso = False
+
+        with open(self.log_path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                raw = line.rstrip("\n")
+                stripped = raw.strip()
+
+                if stripped.startswith("QSO:"):
+                    in_qso = True
+                    parts = stripped.split()
+                    if len(parts) < 11:
+                        continue
+                    freq, mode = parts[1], parts[2]
+                    date, time = parts[3], parts[4]
+                    mycall, rst_s, exch_s = parts[5], parts[6], parts[7]
+                    hiscall, rst_r, exch_r = parts[8], parts[9], parts[10]
+                    dt = datetime.strptime(date + " " + time, "%Y-%m-%d %H%M")
+
+                    qsos.append({
+                        "datetime": dt,
+                        "freq": freq,
+                        "mode": mode,
+                        "mycall": mycall,
+                        "rst_s": rst_s,
+                        "exch_s": exch_s,
+                        "hiscall": hiscall,
+                        "rst_r": rst_r,
+                        "exch_r": exch_r,
+                    })
+                else:
+                    if not in_qso:
+                        headers.append(raw)
+
+        self.header_lines = headers
+        self.qsos = qsos
+
+    def _attach_audio_positions(self):
+        if not RECORDING_START_UTC or not CONTEST_START_UTC:
+            raise RuntimeError("RECORDING_START_UTC and CONTEST_START_UTC must be set")
+
+        rec_start = self._parse_time_utc(RECORDING_START_UTC)
+        contest_start = self._parse_time_utc(CONTEST_START_UTC)
+
+        offset = (contest_start - rec_start).total_seconds()
+
+        for i, q in enumerate(self.qsos):
+            delta = (q["datetime"] - contest_start).total_seconds()
+            abs_sec = offset + delta
+
+            center = abs_sec
+            start_play = max(0.0, center - PRE_SECONDS)
+
+            file_name = None
+            file_offset = 0.0
+            for f in self.audio_index:
+                if start_play >= f["start"] and start_play < f["end"]:
+                    file_name = f["filename"]
+                    file_offset = start_play - f["start"]
+                    break
+
+            q["index"] = i + 1
+            q["abs_rec_second"] = abs_sec
+            q["file"] = file_name
+            q["file_offset"] = round(file_offset, 3)
+
+    def _build(self):
+        self._build_audio_index()
+        self._parse_cabrillo()
+        self._attach_audio_positions()
+
+    # -----------------------------------------------------------
+    # Build audio snippet for [start_s, end_s]
+    # -----------------------------------------------------------
+    def build_audio_window(self, start_s, end_s):
+        total = self.audio_index[-1]["end"]
+        start_s = max(0.0, start_s)
+        end_s = min(total, end_s)
+        if end_s <= start_s:
+            raise RuntimeError("Empty audio window")
+
+        start_ms = int(start_s * 1000)
+        end_ms = int(end_s * 1000)
+
+        combined = AudioSegment.silent(duration=0)
+
+        for f in self.audio_index:
+            fs, fe = f["start"] * 1000, f["end"] * 1000
+            overlap_start = max(start_ms, fs)
+            overlap_end = min(end_ms, fe)
+            if overlap_end <= overlap_start:
+                continue
+
+            local_start = overlap_start - fs
+            local_end = overlap_end - fs
+
+            path = os.path.join(self.audio_dir, f["filename"])
+            audio = AudioSegment.from_file(path)
+            combined += audio[int(local_start):int(local_end)]
+
+        return combined
+
+    # -----------------------------------------------------------
+    # Cabrillo subset builder
+    # -----------------------------------------------------------
+    def build_cabrillo_subset(self, selected_qsos):
+        lines = list(self.header_lines)
+        if not any(l.startswith("START-OF-LOG") for l in lines):
+            lines.insert(0, "START-OF-LOG: 3.0")
+        lines.append("")
+
+        for q in selected_qsos:
+            date_str = q["datetime"].strftime("%Y-%m-%d")
+            time_str = q["datetime"].strftime("%H%M")
+            line = (
+                f"QSO: {q['freq']:>5} {q['mode']:>2} {date_str} {time_str} "
+                f"{q['mycall']:<13} {q['rst_s']:>3} {q['exch_s']:<6} "
+                f"{q['hiscall']:<13} {q['rst_r']:>3} {q['exch_r']:<6}"
+            )
+            lines.append(line)
+
+        lines.append("END-OF-LOG:")
+        return "\n".join(lines)
 
 
-def build_audio_index():
-    """Scan AUDIO_DIR for .mp3 files and build a continuous timeline."""
-    files = [f for f in os.listdir(AUDIO_DIR) if f.lower().endswith(".mp3")]
-    if not files:
-        raise RuntimeError(f"No MP3 files found in {AUDIO_DIR}")
+# -------------------------------------------------------------------
+# Discover all contests under CONTESTS_ROOT
+# -------------------------------------------------------------------
 
-    files.sort()  # assumes filename order == chronological order
+contests = {}  # id -> ContestSession
 
-    index = []
-    start = 0.0
-    for name in files:
-        path = os.path.join(AUDIO_DIR, name)
-        audio = MP3(path)
-        duration = float(audio.info.length)  # seconds
-        index.append({
-            "filename": name,
-            "start": start,
-            "end": start + duration,
-        })
-        start += duration
-
-    return index
-
-
-def parse_cabrillo(path):
-    """Very simple Cabrillo QSO parser. Returns (header_lines, qso_list)."""
-    qsos = []
-    headers = []
-    in_qso = False
-
-    with open(path, encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            raw = line.rstrip("\n")
-            stripped = raw.strip()
-
-            if stripped.startswith("QSO:"):
-                in_qso = True
-                parts = stripped.split()
-                # QSO: freq mode date time mycall rst_s exch_s hiscall rst_r exch_r ...
-                if len(parts) < 11:
-                    continue
-
-                freq = parts[1]
-                mode = parts[2]
-                date = parts[3]          # YYYY-MM-DD
-                time = parts[4]          # HHMM
-                mycall = parts[5]
-                rst_s = parts[6]
-                exch_s = parts[7]
-                hiscall = parts[8]
-                rst_r = parts[9]
-                exch_r = parts[10]
-
-                dt = datetime.strptime(date + " " + time, "%Y-%m-%d %H%M")
-
-                qsos.append({
-                    "datetime": dt,
-                    "freq": freq,
-                    "mode": mode,
-                    "mycall": mycall,
-                    "rst_s": rst_s,
-                    "exch_s": exch_s,
-                    "hiscall": hiscall,
-                    "rst_r": rst_r,
-                    "exch_r": exch_r,
-                })
-            else:
-                if not in_qso:
-                    headers.append(raw)
-
-    return headers, qsos
-
-
-def attach_audio_positions(qsos, audio_index):
-    """For each QSO, compute which file + offset (in seconds) to jump to."""
-    if not RECORDING_START_UTC or not CONTEST_START_UTC:
-        raise RuntimeError("RECORDING_START_UTC and CONTEST_START_UTC env vars must be set.")
-
-    rec_start = parse_time_utc(RECORDING_START_UTC)
-    contest_start = parse_time_utc(CONTEST_START_UTC)
-
-    offset_rec_vs_contest = (contest_start - rec_start).total_seconds()
-
-    for i, q in enumerate(qsos):
-        delta_qso_vs_contest = (q["datetime"] - contest_start).total_seconds()
-        absolute_rec_second = offset_rec_vs_contest + delta_qso_vs_contest
-
-        center = absolute_rec_second
-        start_play = max(0.0, center - PRE_SECONDS)
-
-        file_name = None
-        file_offset = 0.0
-
-        for f in audio_index:
-            if start_play >= f["start"] and start_play < f["end"]:
-                file_name = f["filename"]
-                file_offset = start_play - f["start"]
-                break
-
-        q["index"] = i + 1
-        q["abs_rec_second"] = absolute_rec_second
-        q["file"] = file_name
-        q["file_offset"] = round(file_offset, 3)
-
-    return qsos
-
-
-# --- helper: build AudioSegment for [start_s, end_s] over all MP3 files ---
-def build_audio_window(start_s: float, end_s: float) -> AudioSegment:
-    """Return a pydub.AudioSegment for [start_s, end_s] seconds in the whole recording."""
-    if not audio_index:
-        raise RuntimeError("Audio index not built")
-
-    # total duration
-    total_duration = audio_index[-1]["end"]
-    start_s = max(0.0, start_s)
-    end_s = min(total_duration, end_s)
-    if end_s <= start_s:
-        raise RuntimeError("Requested audio window is empty or out of range.")
-
-    start_ms = int(start_s * 1000)
-    end_ms = int(end_s * 1000)
-
-    combined = AudioSegment.silent(duration=0)
-
-    for f in audio_index:
-        file_start_ms = int(f["start"] * 1000)
-        file_end_ms = int(f["end"] * 1000)
-
-        overlap_start_ms = max(start_ms, file_start_ms)
-        overlap_end_ms = min(end_ms, file_end_ms)
-        if overlap_end_ms <= overlap_start_ms:
+def init_contests():
+    for name in os.listdir(CONTESTS_ROOT):
+        base = os.path.join(CONTESTS_ROOT, name)
+        if not os.path.isdir(base):
             continue
+        audio_dir = os.path.join(base, "audio")
+        log_file = os.path.join(base, "logs", "contest.log")
+        if os.path.isdir(audio_dir) and os.path.isfile(log_file):
+            contests[name] = ContestSession(name, base)
 
-        local_start_ms = overlap_start_ms - file_start_ms
-        local_end_ms = overlap_end_ms - file_start_ms
-
-        path = os.path.join(AUDIO_DIR, f["filename"])
-        audio = AudioSegment.from_file(path)
-        part = audio[local_start_ms:local_end_ms]
-        combined += part
-
-    if len(combined) == 0:
-        raise RuntimeError("No audio in requested window.")
-    return combined
+init_contests()
 
 
-# --- helper: build a small Cabrillo for selected QSOs ---
-def build_cabrillo_subset(selected_qsos):
-    """Return Cabrillo text (str) containing header + only the selected QSO lines."""
-    lines = []
-    # header lines as they were in the original file
-    for h in header_lines:
-        lines.append(h)
-
-    # ensure there's a START-OF-LOG header if not present (minimal safety)
-    if not any(l.startswith("START-OF-LOG") for l in lines):
-        lines.insert(0, "START-OF-LOG: 3.0")
-
-    # blank line between header and QSO lines
-    lines.append("")
-
-    for q in selected_qsos:
-        date_str = q["datetime"].strftime("%Y-%m-%d")
-        time_str = q["datetime"].strftime("%H%M")
-        freq = q["freq"]
-        mode = q["mode"]
-        mycall = q["mycall"]
-        rst_s = q["rst_s"]
-        exch_s = q["exch_s"]
-        hiscall = q["hiscall"]
-        rst_r = q["rst_r"]
-        exch_r = q["exch_r"]
-
-        line = (
-            f"QSO: {freq:>5} {mode:>2} {date_str} {time_str} "
-            f"{mycall:<13} {rst_s:>3} {exch_s:<6} "
-            f"{hiscall:<13} {rst_r:>3} {exch_r:<6}"
-        )
-        lines.append(line)
-
-    lines.append("END-OF-LOG:")
-    return "\n".join(lines)
-
+# -------------------------------------------------------------------
+# ROUTES
+# -------------------------------------------------------------------
 
 @app.route("/")
-def index():
+def home():
+    ids = sorted(contests.keys())
+    return render_template("home.html", contests=ids)
+
+
+@app.route("/contest/<contest_id>")
+def contest_view(contest_id):
+    if contest_id not in contests:
+        return "Unknown contest", 404
+
+    sess = contests[contest_id]
+
     call_query = (request.args.get("call") or "").strip().upper()
     time_from_query = (request.args.get("time_from") or "").strip()
     time_to_query = (request.args.get("time_to") or "").strip()
 
-    # Parse time_from / time_to if provided
-    time_from_dt = None
-    time_to_dt = None
-    time_fmt = "%Y-%m-%d %H:%M"  # same format we display in the table
+    time_fmt = "%Y-%m-%d %H:%M"
+    t_from = None
+    t_to = None
 
     if time_from_query:
-        try:
-            time_from_dt = datetime.strptime(time_from_query, time_fmt)
-        except ValueError:
-            time_from_dt = None  # invalid -> ignore filter
+        try: t_from = datetime.strptime(time_from_query, time_fmt)
+        except: t_from = None
 
     if time_to_query:
-        try:
-            time_to_dt = datetime.strptime(time_to_query, time_fmt)
-        except ValueError:
-            time_to_dt = None
+        try: t_to = datetime.strptime(time_to_query, time_fmt)
+        except: t_to = None
 
     filtered = []
-    for q in qsos:
-        # Call filter (matches MY call or DX call, case-insensitive)
-        if call_query:
-            if call_query not in q["hiscall"].upper() and call_query not in q["mycall"].upper():
-                continue
-
-        # Time range filter
-        q_dt = q["datetime"]
-        if time_from_dt and q_dt < time_from_dt:
+    for q in sess.qsos:
+        if call_query and call_query not in q["mycall"].upper() and call_query not in q["hiscall"].upper():
             continue
-        if time_to_dt and q_dt > time_to_dt:
+        if t_from and q["datetime"] < t_from:
             continue
-
+        if t_to and q["datetime"] > t_to:
+            continue
         filtered.append(q)
 
     return render_template(
         "index.html",
+        contest_id=contest_id,
         qsos=filtered,
         call_query=call_query,
         time_from_query=time_from_query,
@@ -265,75 +255,59 @@ def index():
     )
 
 
-@app.route("/audio/<path:filename>")
-def audio(filename):
-    return send_from_directory(AUDIO_DIR, filename)
+@app.route("/contest/<contest_id>/audio/<filename>")
+def contest_audio(contest_id, filename):
+    if contest_id not in contests:
+        return "Unknown contest", 404
+    sess = contests[contest_id]
+    return send_from_directory(sess.audio_dir, filename)
 
 
-@app.route("/download_selection", methods=["POST"])
-def download_selection():
+@app.route("/contest/<contest_id>/download_selection", methods=["POST"])
+def contest_download_selection(contest_id):
+    if contest_id not in contests:
+        return "Unknown contest", 404
+    sess = contests[contest_id]
+
     try:
-        start_idx = int(request.form.get("start_index", "0"))
-        end_idx = int(request.form.get("end_index", "0"))
-    except ValueError:
-        return "Invalid indices", 400
+        start_idx = int(request.form["start_index"])
+        end_idx = int(request.form["end_index"])
+    except:
+        return "Invalid QSO range", 400
 
-    if start_idx <= 0 or end_idx <= 0 or end_idx < start_idx:
+    if start_idx <= 0 or end_idx < start_idx:
         return "Invalid range", 400
 
-    selected = [q for q in qsos if start_idx <= q["index"] <= end_idx]
+    selected = [q for q in sess.qsos if start_idx <= q["index"] <= end_idx]
     if not selected:
-        return "No QSOs in selected range", 400
+        return "No QSOs in range", 400
 
     centers = [q["abs_rec_second"] for q in selected]
     start_s = min(centers) - PRE_SECONDS
     end_s = max(centers) + PRE_SECONDS
 
-    audio_seg = build_audio_window(start_s, end_s)
-    cab_text = build_cabrillo_subset(selected)
+    audio_seg = sess.build_audio_window(start_s, end_s)
+    cab_text = sess.build_cabrillo_subset(selected)
 
-    # --- build ZIP in memory ---
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # audio
-        audio_bytes_io = io.BytesIO()
-        audio_seg.export(audio_bytes_io, format="mp3")
-        audio_bytes_io.seek(0)
-        zf.writestr("snippet.mp3", audio_bytes_io.read())
-        # cabrillo
+        audio_bytes = io.BytesIO()
+        audio_seg.export(audio_bytes, format="mp3")
+        audio_bytes.seek(0)
+        zf.writestr("snippet.mp3", audio_bytes.read())
         zf.writestr("snippet.log", cab_text.encode("utf-8"))
     buf.seek(0)
 
-    filename = f"qsos_{start_idx}_to_{end_idx}.zip"
+    fname = f"{contest_id}_qsos_{start_idx}_to_{end_idx}.zip"
 
-    # --- optional: also save ZIP on server in EXPORT_DIR ---
     if EXPORT_DIR:
-        try:
-            os.makedirs(EXPORT_DIR, exist_ok=True)
-            server_path = os.path.join(EXPORT_DIR, filename)
-            with open(server_path, "wb") as f:
-                f.write(buf.getbuffer())
-            app.logger.info(f"Saved export to {server_path}")
-        except Exception as e:
-            app.logger.error(f"Error saving export to EXPORT_DIR: {e}")
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        with open(os.path.join(EXPORT_DIR, fname), "wb") as f:
+            f.write(buf.getbuffer())
 
-    # --- send to browser as download ---
-    return send_file(
-        buf,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=filename,
-    )
-
-
-def init_app():
-    global audio_index, qsos, header_lines
-    audio_index = build_audio_index()
-    header_lines, qsos_raw = parse_cabrillo(CABRILLO_FILE)
-    qsos = attach_audio_positions(qsos_raw, audio_index)
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=fname)
 
 
 if __name__ == "__main__":
-    init_app()
     app.run(host="0.0.0.0", port=8000, debug=True)
 
