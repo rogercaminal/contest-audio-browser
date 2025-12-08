@@ -4,33 +4,13 @@
     <meta charset="utf-8">
     <title>Contest Audio Browser</title>
     <style>
-      body { 
-        font-family: system-ui, sans-serif; 
-        margin: 0; 
-      }
-      .page {
-        margin: 1rem;
-      }
-      table { 
-        border-collapse: collapse; 
-        width: 100%; 
-      }
-      th, td { 
-        border: 1px solid #ccc; 
-        padding: 4px 6px; 
-        font-size: 0.9rem; 
-      }
-      th { 
-        background: #f3f3f3; 
-      }
-      tr:hover { 
-        background: #eef; 
-        cursor: pointer; 
-      }
-      .small { 
-        font-size: 0.8rem; 
-        color: #555; 
-      }
+      body { font-family: system-ui, sans-serif; margin: 0; }
+      .page { margin: 1rem; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 0.9rem; }
+      th { background: #f3f3f3; }
+      tr:hover { background: #eef; cursor: pointer; }
+      .small { font-size: 0.8rem; color: #555; }
       .search-bar {
         margin-bottom: 0.5rem;
         padding: 0.5rem;
@@ -51,7 +31,6 @@
         font-size: 0.9rem;
       }
 
-      /* 🔹 Sticky audio bar */
       .sticky-player {
         position: sticky;
         top: 0;
@@ -60,26 +39,32 @@
         padding: 0.5rem 1rem 0.5rem 1rem;
         border-bottom: 1px solid #ddd;
       }
-      .sticky-player-inner {
-        max-width: 1200px;
-        margin: 0 auto;
+      .sticky-player-inner { max-width: 1200px; margin: 0 auto; }
+
+      /* selection highlighting */
+      tr.selected-range { background: #cde !important; }
+      .controls-bar {
+        margin-bottom: 0.5rem;
+      }
+      .controls-bar button {
+        padding: 3px 8px;
+        font-size: 0.9rem;
+        margin-right: 0.5rem;
       }
     </style>
   </head>
   <body>
-    <!-- Sticky bar with title + audio always visible -->
     <div class="sticky-player">
       <div class="sticky-player-inner">
         <h1 style="margin: 0 0 0.3rem 0;">Contest Audio Browser</h1>
         <p class="small" style="margin: 0 0 0.3rem 0;">
-          Click a QSO row to jump the audio player to that QSO (starting a few seconds before).
+          Click a QSO row to play. For export, click start row, then end row, and use "Download selection".
         </p>
         <audio id="player" controls style="width: 100%;"></audio>
       </div>
     </div>
 
     <div class="page">
-      <!-- Search form -->
       <form method="get" class="search-bar">
         <label for="call">Callsign:</label>
         <input
@@ -89,19 +74,37 @@
           value="{{ call_query or '' }}"
           placeholder="DL1ABC"
         />
-
-        <label for="time">Time (substring):</label>
+      
+        <label for="time_from">From (UTC):</label>
         <input
           type="text"
-          id="time"
-          name="time"
-          value="{{ time_query or '' }}"
-          placeholder="2025-11-30 13:42"
+          id="time_from"
+          name="time_from"
+          value="{{ time_from_query or '' }}"
+          placeholder="2025-11-30 13:00"
         />
-
+      
+        <label for="time_to">To (UTC):</label>
+        <input
+          type="text"
+          id="time_to"
+          name="time_to"
+          value="{{ time_to_query or '' }}"
+          placeholder="2025-11-30 13:30"
+        />
+      
         <button type="submit">Search</button>
         <a href="/" style="margin-left: 0.5rem;">Clear</a>
       </form>
+      <!-- controls for selection -->
+      <div class="controls-bar small">
+        <span id="selection-info">No selection</span>
+        <form id="download-form" method="post" action="/download_selection" style="display:inline;">
+          <input type="hidden" name="start_index" id="start_index" />
+          <input type="hidden" name="end_index" id="end_index" />
+          <button type="submit">Download selection (audio + Cabrillo ZIP)</button>
+        </form>
+      </div>
 
       <table>
         <thead>
@@ -118,7 +121,7 @@
         </thead>
         <tbody>
           {% for q in qsos %}
-          <tr onclick="playQSO('{{ q.file }}', {{ q.file_offset }})">
+          <tr data-index="{{ q.index }}" onclick="rowClicked(event, '{{ q.file }}', {{ q.file_offset }}, {{ q.index }})">
             <td>{{ q.index }}</td>
             <td>{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
             <td>{{ q.freq }}</td>
@@ -158,6 +161,64 @@
           audio.play();
         }
       }
+
+      // range selection
+      let selStart = null;
+      let selEnd = null;
+
+      function updateSelectionHighlight() {
+        const rows = document.querySelectorAll("tbody tr");
+        rows.forEach(row => {
+          const idx = parseInt(row.getAttribute("data-index"));
+          if (selStart !== null && selEnd !== null && idx >= selStart && idx <= selEnd) {
+            row.classList.add("selected-range");
+          } else {
+            row.classList.remove("selected-range");
+          }
+        });
+
+        const info = document.getElementById("selection-info");
+        const startInput = document.getElementById("start_index");
+        const endInput = document.getElementById("end_index");
+
+        if (selStart !== null && selEnd !== null) {
+          info.textContent = `Selected QSOs from #${selStart} to #${selEnd}`;
+          startInput.value = selStart;
+          endInput.value = selEnd;
+        } else if (selStart !== null) {
+          info.textContent = `Selection start at QSO #${selStart}, click another row to set end`;
+          startInput.value = "";
+          endInput.value = "";
+        } else {
+          info.textContent = "No selection";
+          startInput.value = "";
+          endInput.value = "";
+        }
+      }
+
+      function rowClicked(event, file, offset, index) {
+        // left click: if no selection yet, set start; otherwise set end
+        if (selStart === null) {
+          selStart = index;
+          selEnd = null;
+        } else if (selEnd === null) {
+          if (index >= selStart) {
+            selEnd = index;
+          } else {
+            selEnd = selStart;
+            selStart = index;
+          }
+        } else {
+          // third click: reset selection to this as start
+          selStart = index;
+          selEnd = null;
+        }
+
+        updateSelectionHighlight();
+        playQSO(file, offset);
+      }
+
+      updateSelectionHighlight();
     </script>
   </body>
 </html>
