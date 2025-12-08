@@ -117,19 +117,6 @@ Fields:
 
 ---
 
-# ⚙️ `.env` Configuration
-
-Create a `.env` file at the project root (optional, used for global defaults):
-
-```env
-# Global default padding in seconds before each QSO
-PRE_SECONDS=10
-```
-
-Most timing is now per-contest in `metadata.json`. The `PRE_SECONDS` env is only used as a fallback if `pre_seconds` is not defined in a given contest's `metadata.json`.
-
----
-
 # 🐳 Running With Docker Compose
 
 Ensure your project contains:
