@@ -53,6 +53,12 @@
     <div class="sticky-player">
       <h2 style="margin: 0 0 6px 0;">Contest: {{ contest_id }}</h2>
       <audio id="player" controls style="width: 100%;"></audio>
+    
+      <div class="nav-back" style="margin-top: 8px; margin-bottom: 5px;">
+        <a href="{{ url_for('home') }}" style="font-size: 0.95rem; text-decoration: none;">
+          ⬅ Back to contest list
+        </a>
+      </div>
     </div>
 
     <div class="page">
