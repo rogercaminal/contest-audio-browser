@@ -2,7 +2,7 @@ import os
 import io
 import json
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import (
     Flask,
@@ -319,6 +319,38 @@ init_contests()
 
 
 # -------------------------------------------------------------------
+# Filter helpers
+# -------------------------------------------------------------------
+
+TIME_FILTER_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def parse_filter_time(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, TIME_FILTER_FORMAT)
+    except ValueError:
+        return None
+
+
+def qso_matches_filters(q, call_query: str, t_from, t_to_exclusive):
+    if call_query and call_query not in q["mycall"].upper() and call_query not in q["hiscall"].upper():
+        return False
+    if t_from and q["datetime"] < t_from:
+        return False
+    if t_to_exclusive and q["datetime"] >= t_to_exclusive:
+        return False
+    return True
+
+
+def abs_recording_second(sess: ContestSession, dt: datetime) -> float:
+    rec_start = sess._parse_time_utc(sess.recording_start_utc)
+    contest_start = sess._parse_time_utc(sess.contest_start_utc)
+    return (contest_start - rec_start).total_seconds() + (dt - contest_start).total_seconds()
+
+
+# -------------------------------------------------------------------
 # ROUTES
 # -------------------------------------------------------------------
 
@@ -339,31 +371,14 @@ def contest_view(contest_id):
     time_from_query = (request.args.get("time_from") or "").strip()
     time_to_query = (request.args.get("time_to") or "").strip()
 
-    time_fmt = "%Y-%m-%d %H:%M"
-    t_from = None
-    t_to = None
-
-    if time_from_query:
-        try:
-            t_from = datetime.strptime(time_from_query, time_fmt)
-        except ValueError:
-            t_from = None
-
-    if time_to_query:
-        try:
-            t_to = datetime.strptime(time_to_query, time_fmt)
-        except ValueError:
-            t_to = None
+    t_from = parse_filter_time(time_from_query)
+    t_to = parse_filter_time(time_to_query)
+    t_to_exclusive = t_to + timedelta(minutes=1) if t_to else None
 
     filtered = []
     for q in sess.qsos:
-        if call_query and call_query not in q["mycall"].upper() and call_query not in q["hiscall"].upper():
-            continue
-        if t_from and q["datetime"] < t_from:
-            continue
-        if t_to and q["datetime"] > t_to:
-            continue
-        filtered.append(q)
+        if qso_matches_filters(q, call_query, t_from, t_to_exclusive):
+            filtered.append(q)
 
     return render_template(
         "index.html",
@@ -398,13 +413,28 @@ def contest_download_selection(contest_id):
     if start_idx <= 0 or end_idx <= 0 or end_idx < start_idx:
         return "Invalid range", 400
 
-    selected = [q for q in sess.qsos if start_idx <= q["index"] <= end_idx]
+    call_query = (request.form.get("call") or "").strip().upper()
+    time_from_query = (request.form.get("time_from") or "").strip()
+    time_to_query = (request.form.get("time_to") or "").strip()
+
+    t_from = parse_filter_time(time_from_query)
+    t_to = parse_filter_time(time_to_query)
+    t_to_exclusive = t_to + timedelta(minutes=1) if t_to else None
+
+    selected = [
+        q for q in sess.qsos
+        if start_idx <= q["index"] <= end_idx
+        and qso_matches_filters(q, call_query, t_from, t_to_exclusive)
+    ]
     if not selected:
         return "No QSOs in selected range", 400
 
     centers = [q["abs_rec_second"] for q in selected]
     start_s = min(centers) - sess.pre_seconds
     end_s = max(centers) + sess.pre_seconds
+
+    if t_to_exclusive and max(q["datetime"] for q in selected) >= t_to:
+        end_s = max(end_s, abs_recording_second(sess, t_to_exclusive))
 
     try:
         audio_seg = sess.build_audio_window(start_s, end_s)
@@ -450,4 +480,3 @@ def contest_download_selection(contest_id):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)
-

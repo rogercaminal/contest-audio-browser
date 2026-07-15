@@ -1,157 +1,534 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ contest_id }}</title>
 
     <style>
-      body { margin: 0; font-family: system-ui, sans-serif; }
-      .page { padding: 1rem; }
+      :root {
+        color-scheme: light;
+        --bg: #f4f7fb;
+        --surface: #ffffff;
+        --surface-soft: #f8fafc;
+        --text: #182132;
+        --muted: #667085;
+        --line: #d9e2ef;
+        --primary: #2563eb;
+        --primary-dark: #1d4ed8;
+        --accent: #10b981;
+        --accent-soft: #dcfce7;
+        --warning-soft: #fff7ed;
+        --shadow: 0 18px 48px rgba(15, 23, 42, 0.11);
+      }
 
-      .sticky-player {
+      * { box-sizing: border-box; }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 34rem),
+          radial-gradient(circle at top right, rgba(16, 185, 129, 0.12), transparent 30rem),
+          linear-gradient(135deg, #eef4ff 0%, #f8fafc 52%, #eefdf8 100%);
+      }
+
+      .player-shell {
         position: sticky;
         top: 0;
         z-index: 1000;
-        background: #fff;
-        padding: 0.7rem 1rem;
-        border-bottom: 1px solid #ddd;
+        border-bottom: 1px solid rgba(217, 226, 239, 0.9);
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 10px 32px rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(16px);
       }
 
-      table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 0.9rem; }
-      th { background: #f3f3f3; }
-      tr:hover { background: #eef; cursor: pointer; }
+      .player-inner,
+      .page {
+        width: min(1320px, calc(100% - 32px));
+        margin: 0 auto;
+      }
 
-      .selected-range { background: #cde !important; }
+      .player-inner {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.8fr);
+        gap: 20px;
+        align-items: center;
+        padding: 14px 0;
+      }
+
+      .contest-heading {
+        min-width: 0;
+      }
+
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 7px;
+        color: var(--primary-dark);
+        font-size: 0.9rem;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .back-link:hover { text-decoration: underline; }
+
+      h1 {
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-size: clamp(1.35rem, 3vw, 2rem);
+        line-height: 1.1;
+      }
+
+      .eyebrow {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .audio-panel {
+        display: grid;
+        gap: 9px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, #fff, var(--surface-soft));
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+      }
+
+      .audio-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 0.83rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .status-dot {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #047857;
+        text-transform: none;
+      }
+
+      .status-dot::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+      }
+
+      audio {
+        width: 100%;
+        min-height: 38px;
+      }
+
+      .page {
+        padding: 22px 0 34px;
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: stretch;
+        margin-bottom: 18px;
+      }
+
+      .panel {
+        border: 1px solid rgba(217, 226, 239, 0.92);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
 
       .search-bar {
-        margin-bottom: 1rem;
-        padding: 0.5rem;
-        background: #f5f5f5;
-        border: 1px solid #ddd;
-        font-size: 0.9rem;
+        display: grid;
+        grid-template-columns: minmax(160px, 1fr) minmax(190px, 1fr) minmax(190px, 1fr) auto auto;
+        gap: 12px;
+        align-items: end;
+        padding: 16px;
       }
 
-      .search-bar input[type="text"] {
-        margin-right: 0.5rem;
-        padding: 2px 4px;
+      label {
+        display: grid;
+        gap: 6px;
+        color: #334155;
+        font-size: 0.84rem;
+        font-weight: 800;
       }
 
-      .controls-bar {
-        margin-bottom: 1rem;
-        font-size: 0.9rem;
+      input[type="text"] {
+        width: 100%;
+        min-height: 40px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 11px;
+        color: var(--text);
+        background: #fff;
+        font: inherit;
+        outline: none;
+        transition: border-color 160ms ease, box-shadow 160ms ease;
       }
 
-      .controls-bar button {
-        padding: 3px 8px;
+      input[type="text"]:focus {
+        border-color: rgba(37, 99, 235, 0.72);
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.13);
+      }
+
+      .btn,
+      .link-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 40px;
+        border-radius: 8px;
+        padding: 9px 14px;
+        font: inherit;
+        font-weight: 800;
+        text-decoration: none;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+
+      .btn {
+        border: 1px solid var(--primary);
+        color: #fff;
+        background: linear-gradient(180deg, var(--primary), var(--primary-dark));
+        box-shadow: 0 12px 24px rgba(37, 99, 235, 0.24);
+      }
+
+      .btn:hover,
+      .link-btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn:disabled {
+        opacity: 0.52;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .link-btn {
+        border: 1px solid var(--line);
+        color: #334155;
+        background: #fff;
+      }
+
+      .selection-card {
+        display: grid;
+        min-width: 300px;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 16px;
+      }
+
+      .selection-info {
+        display: inline-flex;
+        align-items: center;
+        min-height: 38px;
+        border-radius: 8px;
+        padding: 9px 12px;
+        color: #0f5132;
+        background: var(--accent-soft);
+        font-weight: 800;
+      }
+
+      .table-panel {
+        overflow: hidden;
+      }
+
+      .table-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 15px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(248, 250, 252, 0.92);
+      }
+
+      .table-title {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .count-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        border-radius: 999px;
+        padding: 6px 11px;
+        color: #1e3a8a;
+        background: #dbeafe;
+        font-size: 0.84rem;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        min-width: 860px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 11px 13px;
+        font-size: 0.92rem;
+        text-align: left;
+        vertical-align: middle;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        color: #475569;
+        background: #f8fafc;
+        font-size: 0.78rem;
+        font-weight: 900;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      tbody tr {
+        background: #fff;
+        transition: background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+      }
+
+      tbody tr:hover {
+        position: relative;
+        z-index: 2;
+        background: #eff6ff;
+        box-shadow: inset 4px 0 0 var(--primary);
+        cursor: pointer;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .selected-range {
+        background: var(--warning-soft) !important;
+        box-shadow: inset 4px 0 0 #f97316;
+      }
+
+      .index-cell {
+        color: var(--muted);
+        font-weight: 900;
+      }
+
+      .mono {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .call {
+        font-weight: 900;
+      }
+
+      .mode-badge {
+        display: inline-flex;
+        min-width: 42px;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        color: #155e75;
+        background: #cffafe;
+        font-size: 0.78rem;
+        font-weight: 900;
+      }
+
+      .empty-row {
+        padding: 36px 18px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      @media (max-width: 1050px) {
+        .player-inner {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .toolbar {
+          grid-template-columns: 1fr;
+        }
+
+        .selection-card {
+          min-width: 0;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .player-inner,
+        .page {
+          width: min(100% - 22px, 1320px);
+        }
+
+        .search-bar {
+          grid-template-columns: 1fr;
+        }
+
+        .btn,
+        .link-btn {
+          width: 100%;
+        }
+
+        .table-head {
+          align-items: flex-start;
+          flex-direction: column;
+        }
       }
     </style>
   </head>
 
   <body>
+    <header class="player-shell">
+      <div class="player-inner">
+        <div class="contest-heading">
+          <a class="back-link" href="{{ url_for('home') }}"><span aria-hidden="true">&lt;</span> Contest list</a>
+          <h1>{{ contest_id }}</h1>
+          <p class="eyebrow">QSO audio playback and export</p>
+        </div>
 
-    <div class="sticky-player">
-      <h2 style="margin: 0 0 6px 0;">Contest: {{ contest_id }}</h2>
-      <audio id="player" controls style="width: 100%;"></audio>
-    
-      <div class="nav-back" style="margin-top: 8px; margin-bottom: 5px;">
-        <a href="{{ url_for('home') }}" style="font-size: 0.95rem; text-decoration: none;">
-          ⬅ Back to contest list
-        </a>
+        <div class="audio-panel">
+          <div class="audio-label">
+            <span>Recording Player</span>
+            <span class="status-dot">Ready</span>
+          </div>
+          <audio id="player" controls></audio>
+        </div>
       </div>
-    </div>
+    </header>
 
-    <div class="page">
+    <main class="page">
+      <div class="toolbar">
+        <form method="get"
+              class="panel search-bar"
+              action="{{ url_for('contest_view', contest_id=contest_id) }}">
+          <label for="call">
+            Callsign
+            <input
+              type="text"
+              id="call"
+              name="call"
+              value="{{ call_query or '' }}"
+              placeholder="DL1ABC"
+            />
+          </label>
 
-      <!-- Search form -->
-      <form method="get"
-            class="search-bar"
-            action="{{ url_for('contest_view', contest_id=contest_id) }}">
-        <label for="call">Callsign:</label>
-        <input
-          type="text"
-          id="call"
-          name="call"
-          value="{{ call_query or '' }}"
-          placeholder="DL1ABC"
-        />
+          <label for="time_from">
+            From (UTC)
+            <input
+              type="text"
+              id="time_from"
+              name="time_from"
+              value="{{ time_from_query or '' }}"
+              placeholder="YYYY-MM-DD HH:MM"
+            />
+          </label>
 
-        <label for="time_from">From (UTC):</label>
-        <input
-          type="text"
-          id="time_from"
-          name="time_from"
-          value="{{ time_from_query or '' }}"
-          placeholder="YYYY-MM-DD HH:MM"
-        />
+          <label for="time_to">
+            To (UTC)
+            <input
+              type="text"
+              id="time_to"
+              name="time_to"
+              value="{{ time_to_query or '' }}"
+              placeholder="YYYY-MM-DD HH:MM"
+            />
+          </label>
 
-        <label for="time_to">To (UTC):</label>
-        <input
-          type="text"
-          id="time_to"
-          name="time_to"
-          value="{{ time_to_query or '' }}"
-          placeholder="YYYY-MM-DD HH:MM"
-        />
-
-        <button type="submit">Search</button>
-        <a href="{{ url_for('contest_view', contest_id=contest_id) }}"
-           style="margin-left: 1rem;">Clear</a>
-      </form>
-
-      <!-- Selection + download controls -->
-      <div class="controls-bar">
-        <span id="selection-info">No selection</span>
-
-        <form
-          id="download-form"
-          action="{{ url_for('contest_download_selection', contest_id=contest_id) }}"
-          method="post"
-          style="display:inline;"
-        >
-          <input type="hidden" id="start_index" name="start_index" />
-          <input type="hidden" id="end_index" name="end_index" />
-          <button type="submit">Download selection</button>
+          <button class="btn" type="submit">Search</button>
+          <a class="link-btn" href="{{ url_for('contest_view', contest_id=contest_id) }}">Clear</a>
         </form>
+
+        <section class="panel selection-card" aria-label="Selection controls">
+          <span class="selection-info" id="selection-info">No selection</span>
+
+          <form
+            id="download-form"
+            action="{{ url_for('contest_download_selection', contest_id=contest_id) }}"
+            method="post"
+          >
+            <input type="hidden" id="start_index" name="start_index" />
+            <input type="hidden" id="end_index" name="end_index" />
+            <input type="hidden" name="call" value="{{ call_query or '' }}" />
+            <input type="hidden" name="time_from" value="{{ time_from_query or '' }}" />
+            <input type="hidden" name="time_to" value="{{ time_to_query or '' }}" />
+            <button class="btn" id="download-button" type="submit" disabled>Download selection</button>
+          </form>
+        </section>
       </div>
 
-      <!-- QSO table -->
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Date/Time (UTC)</th>
-            <th>Freq</th>
-            <th>Mode</th>
-            <th>My Call</th>
-            <th>DX Call</th>
-            <th>Sent</th>
-            <th>Rcvd</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for q in qsos %}
-          <tr
-            data-index="{{ q.index }}"
-            onclick="rowClicked(
-              '{{ url_for('contest_audio', contest_id=contest_id, filename=q.file) if q.file else '' }}',
-              {{ q.file_offset }},
-              {{ q.index }}
-            )"
-          >
-            <td>{{ q.index }}</td>
-            <td>{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td>{{ q.freq }}</td>
-            <td>{{ q.mode }}</td>
-            <td>{{ q.mycall }}</td>
-            <td>{{ q.hiscall }}</td>
-            <td>{{ q.rst_s }} {{ q.exch_s }}</td>
-            <td>{{ q.rst_r }} {{ q.exch_r }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+      <section class="panel table-panel" aria-labelledby="qso-table-title">
+        <div class="table-head">
+          <h2 class="table-title" id="qso-table-title">QSO Log</h2>
+          <span class="count-pill">{{ qsos|length }} shown</span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Date/Time (UTC)</th>
+                <th>Freq</th>
+                <th>Mode</th>
+                <th>My Call</th>
+                <th>DX Call</th>
+                <th>Sent</th>
+                <th>Rcvd</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for q in qsos %}
+              <tr
+                data-index="{{ q.index }}"
+                onclick="rowClicked(
+                  '{{ url_for('contest_audio', contest_id=contest_id, filename=q.file) if q.file else '' }}',
+                  {{ q.file_offset }},
+                  {{ q.index }}
+                )"
+              >
+                <td class="index-cell">{{ q.index }}</td>
+                <td class="mono">{{ q.datetime.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="mono">{{ q.freq }}</td>
+                <td><span class="mode-badge">{{ q.mode }}</span></td>
+                <td class="call">{{ q.mycall }}</td>
+                <td class="call">{{ q.hiscall }}</td>
+                <td>{{ q.rst_s }} {{ q.exch_s }}</td>
+                <td>{{ q.rst_r }} {{ q.exch_r }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td class="empty-row" colspan="8">No QSOs match the current filters.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
 
     <script>
       function playQSO(url, offset) {
@@ -180,12 +557,11 @@
         }
       }
 
-      // Selection logic
       let selStart = null;
       let selEnd = null;
 
       function updateSelection() {
-        const rows = document.querySelectorAll("tbody tr");
+        const rows = document.querySelectorAll("tbody tr[data-index]");
         rows.forEach((r) => {
           const idx = parseInt(r.dataset.index);
           if (
@@ -203,24 +579,27 @@
         const info = document.getElementById("selection-info");
         const startInput = document.getElementById("start_index");
         const endInput = document.getElementById("end_index");
+        const downloadButton = document.getElementById("download-button");
 
         if (selStart !== null && selEnd !== null) {
           info.textContent = `Selected QSOs from #${selStart} to #${selEnd}`;
           startInput.value = selStart;
           endInput.value = selEnd;
+          downloadButton.disabled = false;
         } else if (selStart !== null) {
-          info.textContent = `Selection start at #${selStart}. Click another row to set end.`;
+          info.textContent = `Selection starts at #${selStart}`;
           startInput.value = "";
           endInput.value = "";
+          downloadButton.disabled = true;
         } else {
           info.textContent = "No selection";
           startInput.value = "";
           endInput.value = "";
+          downloadButton.disabled = true;
         }
       }
 
       function rowClicked(audioUrl, offset, index) {
-        // selection handling
         if (selStart === null) {
           selStart = index;
           selEnd = null;
@@ -242,7 +621,5 @@
 
       updateSelection();
     </script>
-
   </body>
 </html>
-
