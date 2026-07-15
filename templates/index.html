@@ -246,6 +246,128 @@
         font-weight: 800;
       }
 
+      .activity-panel {
+        margin-bottom: 18px;
+        overflow: hidden;
+      }
+
+      .activity-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 15px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(248, 250, 252, 0.92);
+      }
+
+      .activity-title {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .activity-tools {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .activity-select {
+        min-height: 36px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 7px 10px;
+        color: var(--text);
+        background: #fff;
+        font: inherit;
+        font-weight: 800;
+      }
+
+      .activity-body {
+        padding: 16px;
+      }
+
+      .activity-chart {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(14px, 1fr);
+        align-items: end;
+        gap: 4px;
+        min-height: 168px;
+        overflow-x: auto;
+        padding: 12px 4px 4px;
+      }
+
+      .activity-bar {
+        position: relative;
+        display: flex;
+        align-items: end;
+        justify-content: center;
+        min-width: 14px;
+        height: 140px;
+        border: 0;
+        border-radius: 6px 6px 2px 2px;
+        padding: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .activity-bar::before {
+        content: "";
+        width: 100%;
+        height: max(3px, var(--bar-height));
+        border-radius: 6px 6px 2px 2px;
+        background: linear-gradient(180deg, #38bdf8, var(--primary));
+        box-shadow: 0 7px 14px rgba(37, 99, 235, 0.16);
+        transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
+      }
+
+      .activity-bar:hover::before,
+      .activity-bar.is-selected::before {
+        transform: translateY(-3px);
+        background: linear-gradient(180deg, #34d399, #059669);
+      }
+
+      .activity-bar.is-muted::before {
+        opacity: 0.28;
+      }
+
+      .activity-bar.is-empty {
+        cursor: default;
+      }
+
+      .activity-bar.is-empty::before {
+        background: #e2e8f0;
+        box-shadow: none;
+        opacity: 1;
+      }
+
+      .activity-count {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #334155;
+        font-size: 0.7rem;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .activity-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .activity-selection {
+        color: #0f5132;
+        font-weight: 800;
+      }
+
       .table-panel {
         overflow: hidden;
       }
@@ -397,6 +519,12 @@
           align-items: flex-start;
           flex-direction: column;
         }
+
+        .activity-head,
+        .activity-meta {
+          align-items: flex-start;
+          flex-direction: column;
+        }
       }
     </style>
   </head>
@@ -480,6 +608,30 @@
         </section>
       </div>
 
+      <section class="panel activity-panel" aria-labelledby="activity-title">
+        <div class="activity-head">
+          <h2 class="activity-title" id="activity-title">Contest Activity</h2>
+          <div class="activity-tools">
+            <label for="activity-interval">
+              Bucket size
+              <select class="activity-select" id="activity-interval">
+                <option value="1">1 min</option>
+                <option value="10" selected>10 min</option>
+                <option value="30">30 min</option>
+                <option value="60">60 min</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="activity-body">
+          <div class="activity-chart" id="activity-chart" aria-label="QSO count by time bucket"></div>
+          <div class="activity-meta">
+            <span id="activity-summary">No QSO activity loaded.</span>
+            <span class="activity-selection" id="activity-selection">Click two bars to fill From and To.</span>
+          </div>
+        </div>
+      </section>
+
       <section class="panel table-panel" aria-labelledby="qso-table-title">
         <div class="table-head">
           <h2 class="table-title" id="qso-table-title">QSO Log</h2>
@@ -531,6 +683,169 @@
     </main>
 
     <script>
+      const qsoTimeline = {{ qso_timeline|tojson }};
+
+      function parseUtcMinute(value) {
+        const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(value || "");
+        if (!match) {
+          return null;
+        }
+
+        const [, year, month, day, hour, minute] = match.map(Number);
+        return Date.UTC(year, month - 1, day, hour, minute);
+      }
+
+      function formatUtcMinute(ms) {
+        const d = new Date(ms);
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+      }
+
+      const activityState = {
+        startMs: parseUtcMinute(document.getElementById("time_from").value),
+        endExclusiveMs: (() => {
+          const toMs = parseUtcMinute(document.getElementById("time_to").value);
+          return toMs === null ? null : toMs + 60000;
+        })(),
+      };
+
+      function buildActivityBuckets(intervalMinutes) {
+        const intervalMs = intervalMinutes * 60000;
+        const times = qsoTimeline
+          .map(parseUtcMinute)
+          .filter((ms) => ms !== null)
+          .sort((a, b) => a - b);
+
+        if (!times.length) {
+          return [];
+        }
+
+        const first = Math.floor(times[0] / intervalMs) * intervalMs;
+        const last = Math.floor(times[times.length - 1] / intervalMs) * intervalMs;
+        const buckets = [];
+        for (let start = first; start <= last; start += intervalMs) {
+          buckets.push({ start, end: start + intervalMs, count: 0 });
+        }
+
+        times.forEach((ms) => {
+          const index = Math.floor((Math.floor(ms / intervalMs) * intervalMs - first) / intervalMs);
+          if (buckets[index]) {
+            buckets[index].count += 1;
+          }
+        });
+
+        return buckets;
+      }
+
+      function renderActivityChart() {
+        const intervalSelect = document.getElementById("activity-interval");
+        const chart = document.getElementById("activity-chart");
+        const summary = document.getElementById("activity-summary");
+        const selection = document.getElementById("activity-selection");
+        const intervalMinutes = Number(intervalSelect.value);
+        const buckets = buildActivityBuckets(intervalMinutes);
+
+        chart.innerHTML = "";
+
+        if (!buckets.length) {
+          summary.textContent = "No QSO activity loaded.";
+          selection.textContent = "Click two bars to fill From and To.";
+          return;
+        }
+
+        const total = buckets.reduce((sum, b) => sum + b.count, 0);
+        const maxCount = Math.max(...buckets.map((b) => b.count), 1);
+        const nonEmpty = buckets.filter((b) => b.count > 0);
+        const peak = nonEmpty.reduce((best, b) => b.count > best.count ? b : best, nonEmpty[0]);
+
+        summary.textContent = `${total} QSOs. Peak ${peak.count} from ${formatUtcMinute(peak.start)} to ${formatUtcMinute(peak.end - 60000)} UTC.`;
+
+        buckets.forEach((bucket) => {
+          const bar = document.createElement("button");
+          const height = `${Math.max(3, Math.round((bucket.count / maxCount) * 100))}%`;
+          const labelEnd = formatUtcMinute(bucket.end - 60000);
+          const inSelectedRange =
+            activityState.startMs !== null &&
+            activityState.endExclusiveMs !== null &&
+            bucket.start < activityState.endExclusiveMs &&
+            bucket.end > activityState.startMs;
+
+          bar.type = "button";
+          bar.className = "activity-bar";
+          bar.style.setProperty("--bar-height", height);
+          bar.title = `${formatUtcMinute(bucket.start)} to ${labelEnd}: ${bucket.count} QSOs`;
+          bar.setAttribute("aria-label", bar.title);
+
+          if (bucket.count === 0) {
+            bar.classList.add("is-empty");
+          } else {
+            bar.addEventListener("click", () => selectActivityBucket(bucket));
+          }
+
+          if (inSelectedRange) {
+            bar.classList.add("is-selected");
+          } else if (activityState.startMs !== null && activityState.endExclusiveMs !== null) {
+            bar.classList.add("is-muted");
+          }
+
+          if (bucket.count > 0 && buckets.length <= 120) {
+            const count = document.createElement("span");
+            count.className = "activity-count";
+            count.textContent = bucket.count;
+            bar.appendChild(count);
+          }
+
+          chart.appendChild(bar);
+        });
+
+        updateActivitySelectionText();
+      }
+
+      function selectActivityBucket(bucket) {
+        if (activityState.startMs === null || activityState.endExclusiveMs !== null) {
+          activityState.startMs = bucket.start;
+          activityState.endExclusiveMs = null;
+        } else if (bucket.start < activityState.startMs) {
+          activityState.endExclusiveMs = activityState.startMs + Number(document.getElementById("activity-interval").value) * 60000;
+          activityState.startMs = bucket.start;
+        } else {
+          activityState.endExclusiveMs = bucket.end;
+        }
+
+        applyActivitySelectionToFilters();
+        renderActivityChart();
+      }
+
+      function applyActivitySelectionToFilters() {
+        const fromInput = document.getElementById("time_from");
+        const toInput = document.getElementById("time_to");
+
+        if (activityState.startMs !== null) {
+          fromInput.value = formatUtcMinute(activityState.startMs);
+        }
+
+        if (activityState.endExclusiveMs !== null) {
+          toInput.value = formatUtcMinute(activityState.endExclusiveMs - 60000);
+        } else {
+          toInput.value = "";
+        }
+      }
+
+      function updateActivitySelectionText() {
+        const selection = document.getElementById("activity-selection");
+
+        if (activityState.startMs !== null && activityState.endExclusiveMs !== null) {
+          selection.textContent = `Filter range: ${formatUtcMinute(activityState.startMs)} to ${formatUtcMinute(activityState.endExclusiveMs - 60000)} UTC`;
+        } else if (activityState.startMs !== null) {
+          selection.textContent = `Start set to ${formatUtcMinute(activityState.startMs)} UTC. Click an end bar.`;
+        } else {
+          selection.textContent = "Click two bars to fill From and To.";
+        }
+      }
+
+      document.getElementById("activity-interval").addEventListener("change", renderActivityChart);
+      renderActivityChart();
+
       function playQSO(url, offset) {
         const audio = document.getElementById("player");
 

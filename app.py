@@ -384,6 +384,7 @@ def contest_view(contest_id):
         "index.html",
         contest_id=contest_id,
         qsos=filtered,
+        qso_timeline=[q["datetime"].strftime("%Y-%m-%d %H:%M") for q in sess.qsos],
         call_query=call_query,
         time_from_query=time_from_query,
         time_to_query=time_to_query,
